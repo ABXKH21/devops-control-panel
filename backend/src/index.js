@@ -1,0 +1,27 @@
+require('dotenv').config()
+const express = require('express')
+const cors = require('cors')
+const helmet = require('helmet')
+const morgan = require('morgan')
+const { migrate } = require('./db/migrate')
+
+const app = express()
+const PORT = process.env.PORT || 3000
+
+app.use(helmet())
+app.use(cors())
+app.use(morgan('dev'))
+app.use(express.json())
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
+async function start() {
+  await migrate()
+  app.listen(PORT, () => {
+    console.log(`Backend running on port ${PORT}`)
+  })
+}
+
+start().catch(console.error)
