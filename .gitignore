@@ -1,0 +1,22 @@
+# Environment files
+.env
+*.env.local
+
+# Node
+node_modules/
+dist/
+build/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker/volumes/
+
+# IDE
+.vscode/
+.idea/
