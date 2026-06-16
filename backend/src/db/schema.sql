@@ -10,13 +10,13 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS task_types (
   id SERIAL PRIMARY KEY,
-  label VARCHAR(100) NOT NULL,
+  label VARCHAR(100) NOT NULL UNIQUE,
   active BOOLEAN NOT NULL DEFAULT true
 );
 
 CREATE TABLE IF NOT EXISTS systems (
   id SERIAL PRIMARY KEY,
-  label VARCHAR(100) NOT NULL,
+  label VARCHAR(100) NOT NULL UNIQUE,
   active BOOLEAN NOT NULL DEFAULT true
 );
 
@@ -57,7 +57,7 @@ INSERT INTO task_types (label) VALUES
   ('SIT deployment'),
   ('Monitoring response'),
   ('Other')
-ON CONFLICT DO NOTHING;
+ON CONFLICT (label) DO NOTHING;
 
 INSERT INTO systems (label) VALUES
   ('Core Banking'),
@@ -66,4 +66,4 @@ INSERT INTO systems (label) VALUES
   ('Payment Gateway'),
   ('HR System'),
   ('Other')
-ON CONFLICT DO NOTHING;
+ON CONFLICT (label) DO NOTHING;

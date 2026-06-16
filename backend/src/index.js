@@ -18,6 +18,7 @@ app.get('/api/health', (req, res) => {
 })
 
 app.use('/api/auth', require('./routes/auth'))
+app.use('/api/tasks', require('./routes/tasks'))
 
 async function start() {
   await migrate()
