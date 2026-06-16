@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS deployments (
   system_id INTEGER REFERENCES systems(id),
   scheduled_date TIMESTAMPTZ,
   release_note_path VARCHAR(500),
-  status VARCHAR(30) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'ready_to_deploy', 'deployed', 'overdue')),
+  status VARCHAR(30) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'ready_to_deploy', 'deployed', 'overdue', 'on_hold', 'rolled_back')),
   notes TEXT,
   deployed_by INTEGER REFERENCES users(id),
   deployed_at TIMESTAMPTZ,
@@ -49,21 +49,20 @@ CREATE TABLE IF NOT EXISTS deployments (
 );
 
 INSERT INTO task_types (label) VALUES
-  ('Server access provisioning'),
+  ('Production Access'),
   ('Service restart'),
   ('Troubleshooting'),
-  ('Database work'),
+  ('Database Task'),
   ('UAT deployment'),
-  ('SIT deployment'),
-  ('Monitoring response'),
+  ('SIT deployment'),,
   ('Other')
 ON CONFLICT (label) DO NOTHING;
 
 INSERT INTO systems (label) VALUES
-  ('Core Banking'),
-  ('Internet Banking'),
-  ('Mobile Banking'),
-  ('Payment Gateway'),
-  ('HR System'),
-  ('Other')
+  ('FS'),
+  ('Newgen'),
+  ('PlatformX'),
+  ('SME'),
+  ('Outsystems'),
+  ('Oracle')
 ON CONFLICT (label) DO NOTHING;

@@ -8,22 +8,16 @@ const statusColor = {
   ready_to_deploy: 'bg-blue-900 text-blue-300',
   deployed: 'bg-green-900 text-green-300',
   overdue: 'bg-red-900 text-red-300',
+  on_hold: 'bg-amber-900 text-amber-300',
+  rolled_back: 'bg-purple-900 text-purple-300',
 }
 
-const slaColor = (deployment) => {
-  if (deployment.status !== 'deployed') return ''
-  const scheduled = new Date(deployment.scheduled_date)
-  const deployed = new Date(deployment.deployed_at)
-  return deployed <= scheduled
-    ? 'text-green-400'
-    : 'text-red-400'
-}
+const CHANGEABLE_STATUSES = ['on_hold', 'deployed', 'rolled_back']
 
-const slaBadge = (deployment) => {
-  if (deployment.status !== 'deployed' || !deployment.scheduled_date) return '—'
-  const scheduled = new Date(deployment.scheduled_date)
-  const deployed = new Date(deployment.deployed_at)
-  return deployed <= scheduled ? '✓ Met' : '✗ Breached'
+function slaBadge(dep) {
+  if (dep.status !== 'deployed' || !dep.scheduled_date) return { text: '—', color: 'text-gray-500' }
+  const met = new Date(dep.deployed_at) <= new Date(dep.scheduled_date)
+  return { text: met ? '✓ Met' : '✗ Breached', color: met ? 'text-green-400' : 'text-red-400' }
 }
 
 export default function Deployments() {
@@ -36,6 +30,7 @@ export default function Deployments() {
     cr_number: '', requestor: '', system_id: '',
     scheduled_date: '', notes: ''
   })
+  const [file, setFile] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -54,13 +49,16 @@ export default function Deployments() {
     setError('')
     setSubmitting(true)
     try {
-      const payload = { ...form }
-      if (!payload.system_id) delete payload.system_id
-      if (!payload.scheduled_date) delete payload.scheduled_date
-      const res = await client.post('/deployments', payload)
+      const data = new FormData()
+      Object.entries(form).forEach(([k, v]) => { if (v) data.append(k, v) })
+      if (file) data.append('release_note', file)
+      const res = await client.post('/deployments', data, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
       setDeployments([res.data, ...deployments])
       setShowForm(false)
       setForm({ cr_number: '', requestor: '', system_id: '', scheduled_date: '', notes: '' })
+      setFile(null)
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create CR')
     } finally {
@@ -68,16 +66,16 @@ export default function Deployments() {
     }
   }
 
-  async function markDeployed(id) {
+  async function changeStatus(dep, status) {
     try {
-      const res = await client.patch(`/deployments/${id}/deploy`)
-      setDeployments(deployments.map(d => d.id === id ? res.data : d))
+      const res = await client.put(`/deployments/${dep.id}`, { status })
+      setDeployments(deployments.map(d => d.id === dep.id ? res.data : d))
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to mark as deployed')
+      alert(err.response?.data?.error || 'Failed to update status')
     }
   }
 
-  const canDeploy = user?.role === 'admin' || user?.role === 'team_lead'
+  const canChangeStatus = user?.role === 'admin' || user?.role === 'team_lead'
 
   return (
     <Layout>
@@ -87,10 +85,8 @@ export default function Deployments() {
             <h2 className="text-xl font-semibold text-white">Deployment Manager</h2>
             <p className="text-gray-400 text-sm mt-1">{deployments.length} change requests</p>
           </div>
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg transition-colors"
-          >
+          <button onClick={() => setShowForm(!showForm)}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg transition-colors">
             + New CR
           </button>
         </div>
@@ -126,6 +122,12 @@ export default function Deployments() {
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" />
               </div>
               <div className="col-span-2">
+                <label className="block text-xs text-gray-400 mb-1">Release note (PDF or Word)</label>
+                <input type="file" accept=".pdf,.doc,.docx"
+                  onChange={e => setFile(e.target.files[0])}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-300 text-sm" />
+              </div>
+              <div className="col-span-2">
                 <label className="block text-xs text-gray-400 mb-1">Notes</label>
                 <textarea value={form.notes} onChange={e => setForm({...form, notes: e.target.value})}
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" rows={2} />
@@ -151,38 +153,54 @@ export default function Deployments() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-800">
-                  {['CR Number', 'Requestor', 'System', 'Scheduled', 'Status', 'SLA', ''].map(h => (
+                  {['CR Number', 'Requestor', 'System', 'Scheduled', 'Release Note', 'Status', 'SLA', ''].map(h => (
                     <th key={h} className="text-left text-xs text-gray-400 font-medium px-4 py-3">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {deployments.map(dep => (
-                  <tr key={dep.id} className={`border-b border-gray-800 last:border-0 hover:bg-gray-800/50 ${dep.status === 'overdue' ? 'bg-red-950/20' : ''}`}>
-                    <td className="px-4 py-3 text-sm font-mono text-white">{dep.cr_number}</td>
-                    <td className="px-4 py-3 text-sm text-gray-300">{dep.requestor}</td>
-                    <td className="px-4 py-3 text-sm text-gray-300">{dep.system_label || '—'}</td>
-                    <td className="px-4 py-3 text-sm text-gray-400">
-                      {dep.scheduled_date ? new Date(dep.scheduled_date).toLocaleDateString() : '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-1 rounded-full ${statusColor[dep.status]}`}>
-                        {dep.status.replace('_', ' ')}
-                      </span>
-                    </td>
-                    <td className={`px-4 py-3 text-sm font-medium ${slaColor(dep)}`}>
-                      {slaBadge(dep)}
-                    </td>
-                    <td className="px-4 py-3">
-                      {canDeploy && dep.status === 'ready_to_deploy' && (
-                        <button onClick={() => markDeployed(dep.id)}
-                          className="text-xs text-green-400 hover:text-green-300 transition-colors">
-                          Mark deployed
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {deployments.map(dep => {
+                  const sla = slaBadge(dep)
+                  return (
+                    <tr key={dep.id} className={`border-b border-gray-800 last:border-0 hover:bg-gray-800/50 ${dep.status === 'overdue' ? 'bg-red-950/20' : ''}`}>
+                      <td className="px-4 py-3 text-sm font-mono text-white">{dep.cr_number}</td>
+                      <td className="px-4 py-3 text-sm text-gray-300">{dep.requestor}</td>
+                      <td className="px-4 py-3 text-sm text-gray-300">{dep.system_label || '—'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-400">
+                        {dep.scheduled_date ? new Date(dep.scheduled_date).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {dep.release_note_path
+                          ? <a href={`/uploads/${dep.release_note_path}`} target="_blank" rel="noreferrer"
+                              className="text-blue-400 hover:text-blue-300">📎 View</a>
+                          : <span className="text-gray-600">—</span>
+                        }
+                      </td>
+                      <td className="px-4 py-3">
+                        {canChangeStatus ? (
+                          <select
+                            value={dep.status}
+                            onChange={e => changeStatus(dep, e.target.value)}
+                            className={`text-xs px-2 py-1 rounded-full border-0 cursor-pointer ${statusColor[dep.status]} bg-transparent`}
+                          >
+                            <option value={dep.status}>{dep.status.replace(/_/g, ' ')}</option>
+                            {CHANGEABLE_STATUSES.filter(s => s !== dep.status).map(s => (
+                              <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className={`text-xs px-2 py-1 rounded-full ${statusColor[dep.status]}`}>
+                            {dep.status.replace(/_/g, ' ')}
+                          </span>
+                        )}
+                      </td>
+                      <td className={`px-4 py-3 text-sm font-medium ${sla.color}`}>{sla.text}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        {dep.deployed_by_name && <span>by {dep.deployed_by_name}</span>}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

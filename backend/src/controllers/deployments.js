@@ -1,7 +1,35 @@
 const { pool } = require('../db')
+const multer = require('multer')
+const path = require('path')
+const fs = require('fs')
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, '../../uploads')
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    cb(null, dir)
+  },
+  filename: (req, file, cb) => {
+    const unique = `${Date.now()}-${file.originalname}`
+    cb(null, unique)
+  }
+})
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.pdf', '.doc', '.docx']
+    const ext = path.extname(file.originalname).toLowerCase()
+    if (allowed.includes(ext)) cb(null, true)
+    else cb(new Error('Only PDF and Word documents allowed'))
+  }
+})
+
+const VALID_STATUSES = ['pending', 'ready_to_deploy', 'deployed', 'overdue', 'on_hold', 'rolled_back']
 
 function calcStatus(scheduled_date, release_note_path, current_status) {
-  if (current_status === 'deployed') return 'deployed'
+  if (['deployed', 'rolled_back', 'on_hold'].includes(current_status)) return current_status
   if (scheduled_date && release_note_path) return 'ready_to_deploy'
   if (scheduled_date && new Date(scheduled_date) < new Date()) return 'overdue'
   return 'pending'
@@ -35,9 +63,7 @@ async function getById(req, res) {
        WHERE d.id = $1`,
       [req.params.id]
     )
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Deployment not found' })
-    }
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Deployment not found' })
     res.json(result.rows[0])
   } catch (err) {
     console.error(err)
@@ -47,24 +73,21 @@ async function getById(req, res) {
 
 async function create(req, res) {
   const { cr_number, requestor, system_id, scheduled_date, notes } = req.body
-
   if (!cr_number || !requestor) {
     return res.status(400).json({ error: 'cr_number and requestor are required' })
   }
-
   try {
-    const status = calcStatus(scheduled_date, null, null)
+    const release_note_path = req.file ? req.file.filename : null
+    const status = calcStatus(scheduled_date, release_note_path, null)
     const result = await pool.query(
-      `INSERT INTO deployments (cr_number, requestor, system_id, scheduled_date, notes, status, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO deployments (cr_number, requestor, system_id, scheduled_date, release_note_path, notes, status, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [cr_number, requestor, system_id, scheduled_date, notes, status, req.user.id]
+      [cr_number, requestor, system_id || null, scheduled_date || null, release_note_path, notes, status, req.user.id]
     )
     res.status(201).json(result.rows[0])
   } catch (err) {
-    if (err.code === '23505') {
-      return res.status(409).json({ error: 'CR number already exists' })
-    }
+    if (err.code === '23505') return res.status(409).json({ error: 'CR number already exists' })
     console.error(err)
     res.status(500).json({ error: 'Server error' })
   }
@@ -72,18 +95,23 @@ async function create(req, res) {
 
 async function update(req, res) {
   const { id } = req.params
-  const { cr_number, requestor, system_id, scheduled_date, notes } = req.body
+  const { cr_number, requestor, system_id, scheduled_date, notes, status } = req.body
 
   try {
     const existing = await pool.query('SELECT * FROM deployments WHERE id = $1', [id])
-    if (existing.rows.length === 0) {
-      return res.status(404).json({ error: 'Deployment not found' })
-    }
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Deployment not found' })
 
     const current = existing.rows[0]
+    const new_note = req.file ? req.file.filename : current.release_note_path
     const new_scheduled = scheduled_date ?? current.scheduled_date
-    const new_note = req.file ? req.file.path : current.release_note_path
-    const status = calcStatus(new_scheduled, new_note, current.status)
+
+    let new_status = status
+    if (!status || !VALID_STATUSES.includes(status)) {
+      new_status = calcStatus(new_scheduled, new_note, current.status)
+    }
+
+    const deployed_by = ['deployed', 'rolled_back'].includes(new_status) ? req.user.id : current.deployed_by
+    const deployed_at = ['deployed', 'rolled_back'].includes(new_status) && !current.deployed_at ? new Date() : current.deployed_at
 
     const result = await pool.query(
       `UPDATE deployments SET
@@ -91,11 +119,14 @@ async function update(req, res) {
         requestor = COALESCE($2, requestor),
         system_id = COALESCE($3, system_id),
         scheduled_date = COALESCE($4, scheduled_date),
-        notes = COALESCE($5, notes),
-        status = $6
-       WHERE id = $7
+        release_note_path = $5,
+        notes = COALESCE($6, notes),
+        status = $7,
+        deployed_by = $8,
+        deployed_at = $9
+       WHERE id = $10
        RETURNING *`,
-      [cr_number, requestor, system_id, scheduled_date, notes, status, id]
+      [cr_number, requestor, system_id, scheduled_date, new_note, notes, new_status, deployed_by, deployed_at, id]
     )
     res.json(result.rows[0])
   } catch (err) {
@@ -108,17 +139,11 @@ async function markDeployed(req, res) {
   const { id } = req.params
   try {
     const result = await pool.query(
-      `UPDATE deployments SET
-        status = 'deployed',
-        deployed_by = $1,
-        deployed_at = NOW()
-       WHERE id = $2
-       RETURNING *`,
+      `UPDATE deployments SET status = 'deployed', deployed_by = $1, deployed_at = NOW()
+       WHERE id = $2 RETURNING *`,
       [req.user.id, id]
     )
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Deployment not found' })
-    }
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Deployment not found' })
     res.json(result.rows[0])
   } catch (err) {
     console.error(err)
@@ -135,4 +160,4 @@ async function getSystems(req, res) {
   }
 }
 
-module.exports = { getAll, getById, create, update, markDeployed, getSystems }
+module.exports = { getAll, getById, create, update, markDeployed, getSystems, upload }
