@@ -54,7 +54,7 @@ INSERT INTO task_types (label) VALUES
   ('Troubleshooting'),
   ('Database Task'),
   ('UAT deployment'),
-  ('SIT deployment'),,
+  ('SIT deployment'),
   ('Other')
 ON CONFLICT (label) DO NOTHING;
 
