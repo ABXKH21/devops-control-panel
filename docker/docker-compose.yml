@@ -23,6 +23,8 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - NODE_ENV=production
       - PORT=3000
+    volumes:
+      - uploads_data:/app/uploads
     depends_on:
       - postgres
     networks:
@@ -42,6 +44,7 @@ services:
 
 volumes:
   pg_data:
+  uploads_data:
 
 networks:
   app-net:

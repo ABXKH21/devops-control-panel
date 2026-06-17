@@ -5,6 +5,7 @@ const navItems = [
   { to: '/', label: 'Dashboard', icon: '▦' },
   { to: '/tasks', label: 'Task Log', icon: '✓' },
   { to: '/deployments', label: 'Deployments', icon: '🚀' },
+  { to: '/cr-history', label: 'CR History', icon: '📋' },
   { to: '/calendar', label: 'Calendar', icon: '📅' },
 ]
 

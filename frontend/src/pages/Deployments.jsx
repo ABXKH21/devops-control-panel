@@ -13,6 +13,7 @@ const statusColor = {
 }
 
 const CHANGEABLE_STATUSES = ['on_hold', 'deployed', 'rolled_back']
+const LOCKED_STATUSES = ['deployed', 'rolled_back']
 
 function slaBadge(dep) {
   if (dep.status !== 'deployed' || !dep.scheduled_date || !dep.deployed_at) {
@@ -23,6 +24,12 @@ function slaBadge(dep) {
     text: met ? '✓ Met' : '✗ Breached',
     color: met ? 'text-green-400' : 'text-red-400'
   }
+}
+
+function isCurrentMonth(dateStr) {
+  const date = new Date(dateStr)
+  const now = new Date()
+  return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()
 }
 
 export default function Deployments() {
@@ -40,6 +47,8 @@ export default function Deployments() {
   const [error, setError] = useState('')
   const [deployModal, setDeployModal] = useState(null)
   const [deployedAt, setDeployedAt] = useState('')
+  const [confirmModal, setConfirmModal] = useState(null)
+  const [viewModal, setViewModal] = useState(null)
 
   useEffect(() => {
     Promise.all([
@@ -50,6 +59,8 @@ export default function Deployments() {
       setSystems(sysRes.data)
     }).finally(() => setLoading(false))
   }, [])
+
+  const currentMonthDeps = deployments.filter(d => isCurrentMonth(d.created_at))
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -82,13 +93,26 @@ export default function Deployments() {
     }
   }
 
-  async function handleStatusChange(dep, newStatus) {
+  function handleStatusChange(dep, newStatus) {
     if (newStatus === 'deployed') {
-      setDeployModal(dep)
-      setDeployedAt(new Date().toISOString().slice(0, 16))
+      setConfirmModal({ dep, nextStatus: 'deployed' })
       return
     }
-    await changeStatus(dep, newStatus)
+    if (newStatus === 'rolled_back') {
+      setConfirmModal({ dep, nextStatus: 'rolled_back' })
+      return
+    }
+    changeStatus(dep, newStatus)
+  }
+
+  function handleConfirm() {
+    if (confirmModal.nextStatus === 'deployed') {
+      setDeployModal(confirmModal.dep)
+      setDeployedAt(new Date().toISOString().slice(0, 16))
+    } else {
+      changeStatus(confirmModal.dep, confirmModal.nextStatus)
+    }
+    setConfirmModal(null)
   }
 
   async function confirmDeploy() {
@@ -112,7 +136,9 @@ export default function Deployments() {
         <div className="flex justify-between items-center mb-6">
           <div>
             <h2 className="text-xl font-semibold text-white">Deployment Manager</h2>
-            <p className="text-gray-400 text-sm mt-1">{deployments.length} change requests</p>
+            <p className="text-gray-400 text-sm mt-1">
+              {currentMonthDeps.length} CRs this month
+            </p>
           </div>
           <button onClick={() => setShowForm(!showForm)}
             className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg transition-colors">
@@ -167,9 +193,7 @@ export default function Deployments() {
               </div>
               <div className="col-span-2 flex gap-3 justify-end">
                 <button type="button" onClick={() => setShowForm(false)}
-                  className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">
-                  Cancel
-                </button>
+                  className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
                 <button type="submit" disabled={submitting}
                   className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg transition-colors">
                   {submitting ? 'Saving...' : 'Save CR'}
@@ -181,8 +205,8 @@ export default function Deployments() {
 
         {loading ? (
           <div className="text-gray-400 text-sm">Loading...</div>
-        ) : deployments.length === 0 ? (
-          <div className="text-center py-16 text-gray-500">No change requests yet</div>
+        ) : currentMonthDeps.length === 0 ? (
+          <div className="text-center py-16 text-gray-500">No change requests this month</div>
         ) : (
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
             <table className="w-full">
@@ -194,11 +218,18 @@ export default function Deployments() {
                 </tr>
               </thead>
               <tbody>
-                {deployments.map(dep => {
+                {currentMonthDeps.map(dep => {
                   const sla = slaBadge(dep)
+                  const locked = LOCKED_STATUSES.includes(dep.status)
                   return (
                     <tr key={dep.id} className={`border-b border-gray-800 last:border-0 hover:bg-gray-800/50 ${dep.status === 'overdue' ? 'bg-red-950/20' : ''}`}>
-                      <td className="px-4 py-3 text-sm font-mono text-white">{dep.cr_number}</td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => setViewModal(dep)}
+                          className="text-sm font-mono text-blue-400 hover:text-blue-300 hover:underline transition-colors">
+                          {dep.cr_number}
+                        </button>
+                      </td>
                       <td className="px-4 py-3 text-sm text-gray-300">{dep.requestor}</td>
                       <td className="px-4 py-3 text-sm text-gray-300">{dep.system_label || '—'}</td>
                       <td className="px-4 py-3 text-sm text-gray-400">
@@ -212,12 +243,11 @@ export default function Deployments() {
                         }
                       </td>
                       <td className="px-4 py-3">
-                        {canChangeStatus ? (
+                        {canChangeStatus && !locked ? (
                           <select
                             value={dep.status}
                             onChange={e => handleStatusChange(dep, e.target.value)}
-                            className={`text-xs px-2 py-1 rounded-full border-0 cursor-pointer ${statusColor[dep.status]}`}
-                          >
+                            className={`text-xs px-2 py-1 rounded-full border-0 cursor-pointer ${statusColor[dep.status]}`}>
                             <option value={dep.status}>{dep.status.replace(/_/g, ' ')}</option>
                             {CHANGEABLE_STATUSES.filter(s => s !== dep.status).map(s => (
                               <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
@@ -233,9 +263,7 @@ export default function Deployments() {
                         {dep.deployed_at ? new Date(dep.deployed_at).toLocaleString() : '—'}
                       </td>
                       <td className={`px-4 py-3 text-sm font-medium ${sla.color}`}>{sla.text}</td>
-                      <td className="px-4 py-3 text-xs text-gray-500">
-                        {dep.deployed_by_name || '—'}
-                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{dep.deployed_by_name || '—'}</td>
                     </tr>
                   )
                 })}
@@ -245,10 +273,33 @@ export default function Deployments() {
         )}
       </div>
 
+      {/* Confirm modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm">
+            <h3 className="text-white font-medium mb-2">Are you sure?</h3>
+            <p className="text-gray-400 text-sm mb-6">
+              You are about to mark <span className="text-white font-mono">{confirmModal.dep.cr_number}</span> as{' '}
+              <span className="font-medium text-white">{confirmModal.nextStatus.replace(/_/g, ' ')}</span>.
+              This action cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setConfirmModal(null)}
+                className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
+              <button onClick={handleConfirm}
+                className="bg-red-600 hover:bg-red-700 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+                Yes, proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deploy date modal */}
       {deployModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-md">
-            <h3 className="text-white font-medium mb-2">Mark as Deployed</h3>
+            <h3 className="text-white font-medium mb-2">Confirm Deployment</h3>
             <p className="text-gray-400 text-sm mb-4">
               CR: <span className="text-white font-mono">{deployModal.cr_number}</span>
               {deployModal.scheduled_date && (
@@ -259,13 +310,9 @@ export default function Deployments() {
             </p>
             <div className="mb-4">
               <label className="block text-xs text-gray-400 mb-1">Actual deployment date & time</label>
-              <input
-                type="datetime-local"
-                value={deployedAt}
+              <input type="datetime-local" value={deployedAt}
                 onChange={e => setDeployedAt(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm"
-                required
-              />
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" required />
             </div>
             {deployModal.scheduled_date && deployedAt && (
               <div className={`text-sm px-3 py-2 rounded-lg mb-4 ${
@@ -275,19 +322,87 @@ export default function Deployments() {
               }`}>
                 {new Date(deployedAt) <= new Date(deployModal.scheduled_date)
                   ? '✓ SLA will be met'
-                  : '✗ SLA will be breached'
-                }
+                  : '✗ SLA will be breached'}
               </div>
             )}
             <div className="flex gap-3 justify-end">
               <button onClick={() => setDeployModal(null)}
-                className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">
-                Cancel
-              </button>
+                className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
               <button onClick={confirmDeploy}
                 className="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg transition-colors">
                 Confirm deployment
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View CR modal */}
+      {viewModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-lg">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-white font-medium">CR Details</h3>
+              <button onClick={() => setViewModal(null)} className="text-gray-400 hover:text-white text-xl">✕</button>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">CR Number</p>
+                  <p className="text-white font-mono">{viewModal.cr_number}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Status</p>
+                  <span className={`text-xs px-2 py-1 rounded-full ${statusColor[viewModal.status]}`}>
+                    {viewModal.status.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Requestor</p>
+                  <p className="text-white">{viewModal.requestor}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">System</p>
+                  <p className="text-white">{viewModal.system_label || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Scheduled date</p>
+                  <p className="text-white">
+                    {viewModal.scheduled_date ? new Date(viewModal.scheduled_date).toLocaleString() : '—'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Deployed at</p>
+                  <p className="text-white">
+                    {viewModal.deployed_at ? new Date(viewModal.deployed_at).toLocaleString() : '—'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">SLA</p>
+                  <p className={`font-medium ${slaBadge(viewModal).color}`}>{slaBadge(viewModal).text}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Deployed by</p>
+                  <p className="text-white">{viewModal.deployed_by_name || '—'}</p>
+                </div>
+              </div>
+              {viewModal.notes && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Notes</p>
+                  <p className="text-gray-300 text-sm">{viewModal.notes}</p>
+                </div>
+              )}
+              {viewModal.release_note_path && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Release Note</p>
+                  <a href={`/uploads/${viewModal.release_note_path}`} target="_blank" rel="noreferrer"
+                    className="text-blue-400 hover:text-blue-300 text-sm">📎 Download release note</a>
+                </div>
+              )}
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Created at</p>
+                <p className="text-gray-300 text-sm">{new Date(viewModal.created_at).toLocaleString()}</p>
+              </div>
             </div>
           </div>
         </div>
