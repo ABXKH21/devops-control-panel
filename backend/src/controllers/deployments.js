@@ -111,8 +111,8 @@ async function update(req, res) {
     }
 
     const deployed_by = ['deployed', 'rolled_back'].includes(new_status) ? req.user.id : current.deployed_by
-    const deployed_at = ['deployed', 'rolled_back'].includes(new_status) && !current.deployed_at ? new Date() : current.deployed_at
-
+    const deployed_at = req.body.deployed_at || (['deployed', 'rolled_back'].includes(new_status) && !current.deployed_at ? new Date() : current.deployed_at)
+    
     const result = await pool.query(
       `UPDATE deployments SET
         cr_number = COALESCE($1, cr_number),
